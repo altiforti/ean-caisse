@@ -85,6 +85,49 @@
         .hidden {
             display: none;
         }
+        /* Styles pour la modale de confirmation */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .modal-button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .confirm-button {
+            background-color: #5c67f2;
+            color: white;
+        }
+        .cancel-button {
+            background-color: #f25c5c;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -105,6 +148,19 @@
         <div id="message-area"></div>
     </div>
 
+    <!-- Modale de confirmation pour double saisie -->
+    <div id="confirmation-modal" class="modal">
+        <div class="modal-content">
+            <h2>Confirmation</h2>
+            <p>Voulez-vous vraiment scanner ce produit une deuxième fois ?</p>
+            <p id="duplicate-ean" style="font-weight: bold;"></p>
+            <div class="modal-buttons">
+                <button id="confirm-scan" class="modal-button confirm-button">Oui, confirmer</button>
+                <button id="cancel-scan" class="modal-button cancel-button">Non, annuler</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const barcodeInput = document.getElementById('barcode-input');
         const startWebcamButton = document.getElementById('start-webcam-button');
@@ -112,7 +168,16 @@
         const webcamFeed = document.getElementById('webcam-feed');
         const captureButton = document.getElementById('capture-button');
         const messageArea = document.getElementById('message-area');
+        const confirmationModal = document.getElementById('confirmation-modal');
+        const duplicateEanElement = document.getElementById('duplicate-ean');
+        const confirmScanButton = document.getElementById('confirm-scan');
+        const cancelScanButton = document.getElementById('cancel-scan');
         let stream = null;
+
+        // Variables pour la détection de double saisie
+        let lastScannedEan = '';
+        let lastScanTimestamp = 0;
+        let pendingEan = ''; // Pour stocker l'EAN en attente de confirmation
 
         // --- Gestion Code-Barres ---
         barcodeInput.addEventListener('keypress', async (event) => {
@@ -131,27 +196,64 @@
                     return;
                 }
 
-                // If validation passes, proceed with sending
-                messageArea.textContent = `Envoi EAN: ${ean}...`;
-                try {
-                    const response = await fetch('/add_barcode', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ ean: ean })
-                    });
-                    const result = await response.json();
-                    if (response.ok) {
-                        messageArea.textContent = `Succès: ${result.message}. Présenter les couvertures avec titre et auteur bien visible une par une.`;
-                        barcodeInput.value = ''; // Clear input on success
-                    } else {
-                        messageArea.textContent = `Erreur: ${result.message || response.statusText}`;
-                    }
-                } catch (error) {
-                    messageArea.textContent = `Erreur réseau: ${error.message}`;
+                // Vérification de double saisie
+                const currentTime = Date.now();
+                const timeDifference = currentTime - lastScanTimestamp;
+                
+                // Si le même EAN est scanné dans les 5 secondes (5000 ms), demander confirmation
+                if (ean === lastScannedEan && timeDifference < 5000) {
+                    // Stocker l'EAN en attente et afficher la modale de confirmation
+                    pendingEan = ean;
+                    duplicateEanElement.textContent = `EAN: ${ean}`;
+                    confirmationModal.style.display = 'flex';
+                    return;
                 }
+
+                // Si pas de double saisie ou après confirmation, procéder à l'envoi
+                await sendEanToServer(ean);
             }
+        });
+
+        // Fonction pour envoyer l'EAN au serveur
+        async function sendEanToServer(ean) {
+            messageArea.textContent = `Envoi EAN: ${ean}...`;
+            try {
+                const response = await fetch('/add_barcode', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ean: ean })
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    messageArea.textContent = `Succès: ${result.message}. Présenter les couvertures avec titre et auteur bien visible une par une.`;
+                    // Mettre à jour les variables de suivi après un scan réussi
+                    lastScannedEan = ean;
+                    lastScanTimestamp = Date.now();
+                    barcodeInput.value = ''; // Clear input on success
+                } else {
+                    messageArea.textContent = `Erreur: ${result.message || response.statusText}`;
+                }
+            } catch (error) {
+                messageArea.textContent = `Erreur réseau: ${error.message}`;
+            }
+        }
+
+        // Gestion des boutons de la modale de confirmation
+        confirmScanButton.addEventListener('click', async () => {
+            confirmationModal.style.display = 'none';
+            if (pendingEan) {
+                await sendEanToServer(pendingEan);
+                pendingEan = ''; // Réinitialiser l'EAN en attente
+            }
+        });
+
+        cancelScanButton.addEventListener('click', () => {
+            confirmationModal.style.display = 'none';
+            pendingEan = ''; // Réinitialiser l'EAN en attente
+            barcodeInput.value = ''; // Vider le champ de saisie
+            messageArea.textContent = 'Scan annulé.';
         });
 
         // --- Gestion Webcam ---
@@ -236,7 +338,10 @@
             }, 'image/jpeg'); // Spécifier le format
         });
 
+        // Donner le focus au champ de saisie au chargement de la page
+        window.addEventListener('load', () => {
+            barcodeInput.focus();
+        });
     </script>
 </body>
 </html>
-

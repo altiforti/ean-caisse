@@ -11,7 +11,7 @@ import base64 # To encode image data for ImgBB
 
 # --- Configuration ---
 # WARNING: Storing credentials directly in code is insecure. Use environment variables in production.
-AIRTABLE_PAT = "pathyDCddPTFQYlfH.b8cea5cd1ef287d56077f55c6c29058fa0051719337acef88017a16ceefe1b5c"
+AIRTABLE_PAT = "patXSzDU4Ih7MfMAX.283ee2c7df921f93d37f2d305aee62a65670f6c0bf5cdd62e4075b3ec5fcbe01"
 AIRTABLE_BASE_ID = "app0yP7LVfNexKtFF"
 AIRTABLE_TABLE_NAME = "ventes caisse"
 IMGBB_API_KEY = "ca16b79c433722d254b00ad3ef62142e" # Provided by user

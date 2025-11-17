@@ -1,157 +1,117 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
+from dotenv import load_dotenv # Importez dotenv
+
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# --- Configuration Sécurisée ---
+# Charge les variables d'environnement depuis un fichier .env pour le développement local
+# Sur Render, ces variables seront fournies par le dashboard
+load_dotenv()
+
+# Récupère les secrets depuis les variables d'environnement
+AIRTABLE_PAT = os.environ.get("AIRTABLE_PAT")
+AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID")
+AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE_NAME")
+IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY")
+
+# Vérification de sécurité : s'assurer que les variables sont bien définies
+if not all([AIRTABLE_PAT, AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME, IMGBB_API_KEY]):
+    missing_secrets = [secret for secret in ["AIRTABLE_PAT", "AIRTABLE_BASE_ID", "AIRTABLE_TABLE_NAME", "IMGBB_API_KEY"] if not os.environ.get(secret)]
+    raise ValueError(f"Secrets manquants dans les variables d'environnement : {', '.join(missing_secrets)}")
+
+# --- Le reste de votre code ---
+
 from flask import Flask, send_from_directory, request, jsonify
-from airtable import Airtable # Import Airtable library
-import requests # For ImgBB API call
-import base64 # To encode image data for ImgBB
+from airtable import Airtable
+import requests
+import base64
 
-# --- Configuration ---
-# WARNING: Storing credentials directly in code is insecure. Use environment variables in production.
-AIRTABLE_PAT = "patXSzDU4Ih7MfMAX.283ee2c7df921f93d37f2d305aee62a65670f6c0bf5cdd62e4075b3ec5fcbe01"
-AIRTABLE_BASE_ID = "app0yP7LVfNexKtFF"
-AIRTABLE_TABLE_NAME = "ventes caisse"
-IMGBB_API_KEY = "ca16b79c433722d254b00ad3ef62142e" # Provided by user
-
-# Column names from user's screenshot (adjust if needed)
+# Noms des colonnes
 EAN_COLUMN = "EAN"
-PHOTO_COLUMN = "PHOTO" # Confirmed by user
+PHOTO_COLUMN = "PHOTO"
 
-# Initialize Airtable client
+# Initialisation d'Airtable
 airtable = Airtable(AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME, api_key=AIRTABLE_PAT)
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
-app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'une-cle-secrete-par-defaut-pour-le-dev')
 
-# Removed temporary upload folder logic
-
-# --- Airtable Helper Functions ---
+# --- Fonctions d'aide Airtable ---
 def add_ean_to_airtable(ean):
-    """Adds a record to Airtable with the EAN."""
     try:
-        record = {
-            EAN_COLUMN: ean,
-        }
-        airtable.insert(record)
+        airtable.insert({EAN_COLUMN: ean})
         return True, "EAN ajouté avec succès"
     except Exception as e:
         print(f"Erreur Airtable (add_ean): {e}")
         return False, f"Erreur lors de l'ajout à Airtable: {e}"
 
 def add_image_attachment_to_airtable(image_public_url):
-    """Adds a record to Airtable with the image attachment URL."""
     try:
-        record = {
-            PHOTO_COLUMN: [{'url': image_public_url}] # Format for attachment field
-        }
-        airtable.insert(record)
-        return True, "Image ajoutée avec succès à Airtable"
+        records = airtable.get_all(formula=f"AND({{PHOTO}} = '', {{EAN}} != '')")
+        if records:
+            record_id = records[0]['id']
+            airtable.update(record_id, {PHOTO_COLUMN: [{'url': image_public_url}]})
+            return True, "Image liée à l'enregistrement existant"
+        else:
+            airtable.insert({PHOTO_COLUMN: [{'url': image_public_url}]})
+            return True, "Nouvel enregistrement créé avec l'image"
     except Exception as e:
         print(f"Erreur Airtable (add_image_attachment): {e}")
-        error_detail = str(e)
-        if hasattr(e, 'response') and hasattr(e.response, 'text'):
-            error_detail = e.response.text
-        return False, f"Erreur lors de l'ajout de la pièce jointe à Airtable: {error_detail}"
+        return False, f"Erreur lors de l'ajout de la pièce jointe à Airtable: {e}"
 
-# --- ImgBB Helper Function ---
+# --- Fonction d'aide ImgBB ---
 def upload_to_imgbb(image_data):
-    """Uploads image data to ImgBB and returns the public URL."""
     try:
-        imgbb_url = "https://api.imgbb.com/1/upload"
-        payload = {
-            "key": IMGBB_API_KEY,
-            "image": base64.b64encode(image_data), # Send image data base64 encoded
-            # Optional: Set expiration time if needed (e.g., "expiration": 600 for 10 minutes)
-        }
-        response = requests.post(imgbb_url, payload)
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        response = requests.post(
+            "https://api.imgbb.com/1/upload",
+            params={"key": IMGBB_API_KEY},
+            files={"image": image_data}
+         )
+        response.raise_for_status()
         result = response.json()
         if result.get("success"):
             image_url = result.get("data", {}).get("url")
-            if image_url:
-                print(f"Image uploadée sur ImgBB: {image_url}")
-                return True, image_url
-            else:
-                return False, "URL non trouvée dans la réponse ImgBB"
+            return True, image_url
         else:
-            error_message = result.get("error", {}).get("message", "Erreur inconnue ImgBB")
-            return False, f"Erreur ImgBB: {error_message}"
+            return False, result.get("error", {}).get("message", "Erreur inconnue ImgBB")
     except requests.exceptions.RequestException as e:
-        print(f"Erreur réseau lors de l'upload ImgBB: {e}")
         return False, f"Erreur réseau ImgBB: {e}"
-    except Exception as e:
-        print(f"Erreur inattendue lors de l'upload ImgBB: {e}")
-        return False, f"Erreur inattendue ImgBB: {e}"
 
-# --- Flask Endpoints ---
+# --- Endpoints Flask ---
 @app.route('/add_barcode', methods=['POST'])
 def handle_add_barcode():
-    data = request.get_json()
-    ean = data.get('ean')
+    ean = request.json.get('ean')
     if not ean:
         return jsonify({"message": "EAN manquant"}), 400
-
     success, message = add_ean_to_airtable(ean)
-    if success:
-        return jsonify({"message": message}), 200
-    else:
-        return jsonify({"message": message}), 500
+    return jsonify({"message": message}), 200 if success else 500
 
 @app.route('/add_image', methods=['POST'])
 def handle_add_image():
     if 'image' not in request.files:
         return jsonify({"message": "Aucun fichier image reçu"}), 400
+    
+    image_data = request.files['image'].read()
+    success_imgbb, imgbb_result = upload_to_imgbb(image_data)
+    
+    if not success_imgbb:
+        return jsonify({"message": imgbb_result}), 500
 
-    file = request.files['image']
-    image_data = file.read()
+    success_at, message_at = add_image_attachment_to_airtable(imgbb_result)
+    return jsonify({"message": message_at}), 200 if success_at else 500
 
-    try:
-        # 1. Upload image to ImgBB
-        success_imgbb, imgbb_result = upload_to_imgbb(image_data)
-
-        if not success_imgbb:
-            return jsonify({"message": imgbb_result}), 500 # Return ImgBB error
-
-        image_public_url = imgbb_result
-
-        # 2. Add Image Attachment to Airtable using the ImgBB URL
-        success_at, message_at = add_image_attachment_to_airtable(image_public_url)
-
-        if success_at:
-            return jsonify({"message": message_at}), 200
-        else:
-            # Log the error from Airtable
-            print(f"Échec de l'ajout à Airtable: {message_at}")
-            return jsonify({"message": message_at}), 500
-
-    except Exception as e:
-        # Catch any other unexpected errors
-        print(f"Erreur inattendue dans handle_add_image: {e}")
-        return jsonify({"message": f"Erreur serveur inattendue: {e}"}), 500
-
-# --- Static File Serving --- (Keep the existing serve function)
+# --- Service des fichiers statiques ---
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    static_folder_path = app.static_folder
-    if static_folder_path is None:
-            return "Static folder not configured", 404
-
-    # Serve files from static folder directly if they exist
-    if path != "" and os.path.exists(os.path.join(static_folder_path, path)):
-         # Removed temp_uploads check
-         return send_from_directory(static_folder_path, path)
-
-    # Default to index.html
-    index_path = os.path.join(static_folder_path, 'index.html')
-    if os.path.exists(index_path):
-        return send_from_directory(static_folder_path, 'index.html')
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
     else:
-        return "index.html not found", 404
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=False)
-
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host='0.0.0.0', port=port, debug=False)

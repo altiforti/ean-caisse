@@ -50,7 +50,7 @@
             color: white;
             transition: background-color 0.3s ease;
             margin: 10px;
-            min-width: 200px; /* Ensure buttons have a good size */
+            min-width: 200px;
         }
         button:hover {
             background-color: #4a54c4;
@@ -59,11 +59,11 @@
             margin-top: 20px;
             border: 1px solid #ccc;
             background-color: #eee;
-            min-height: 240px; /* Placeholder height */
+            min-height: 240px;
             display: flex;
             justify-content: center;
             align-items: center;
-            position: relative; /* Needed for overlay */
+            position: relative;
         }
         video {
             display: block;
@@ -71,19 +71,43 @@
             height: auto;
         }
         #capture-button {
-            display: none; /* Hidden initially */
+            display: none;
         }
+
+        /* ===== MESSAGES COLORÉS ===== */
         #message-area {
             margin-top: 20px;
-            padding: 10px;
-            border-radius: 4px;
-            min-height: 40px;
+            padding: 15px;
+            border-radius: 6px;
+            min-height: 50px;
+            font-weight: bold;
+            font-size: 1.05em;
+            line-height: 1.5;
+            transition: background-color 0.3s ease, color 0.3s ease;
+            /* État par défaut : gris neutre */
             background-color: #e9e9e9;
             color: #333;
-            font-weight: bold;
+            border: 1px solid #ccc;
         }
+        #message-area.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #28a745;
+        }
+        #message-area.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #dc3545;
+        }
+        #message-area.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #17a2b8;
+        }
+        /* ============================= */
+
         .hidden {
-            display: none;
+            display: none !important;
         }
         /* Styles pour la modale de confirmation */
         .modal {
@@ -119,6 +143,7 @@
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
+            min-width: 120px;
         }
         .confirm-button {
             background-color: #5c67f2;
@@ -177,66 +202,67 @@
         // Variables pour la détection de double saisie
         let lastScannedEan = '';
         let lastScanTimestamp = 0;
-        let pendingEan = ''; // Pour stocker l'EAN en attente de confirmation
+        let pendingEan = '';
+
+        // --- Fonction d'affichage des messages colorés ---
+        function showMessage(text, type) {
+            // type : 'success' (vert), 'error' (rouge), 'info' (bleu), '' (gris neutre)
+            messageArea.textContent = text;
+            messageArea.className = type || '';
+        }
 
         // --- Gestion Code-Barres ---
         barcodeInput.addEventListener('keypress', async (event) => {
             if (event.key === 'Enter') {
-                event.preventDefault(); // Empêche la soumission de formulaire si jamais il y en avait un
+                event.preventDefault();
                 const ean = barcodeInput.value.trim();
-                const eanRegex = /^\d{13}$/; // Regex for exactly 13 digits
+                const eanRegex = /^\d{13}$/;
 
                 if (!ean) {
-                    messageArea.textContent = 'Veuillez scanner ou saisir un EAN.';
+                    showMessage('Veuillez scanner ou saisir un EAN.', 'error');
                     return;
                 }
 
                 if (!eanRegex.test(ean)) {
-                    messageArea.textContent = 'Format EAN invalide. Il doit contenir exactement 13 chiffres.';
+                    showMessage('Format EAN invalide. Il doit contenir exactement 13 chiffres.', 'error');
                     return;
                 }
 
                 // Vérification de double saisie
                 const currentTime = Date.now();
                 const timeDifference = currentTime - lastScanTimestamp;
-                
-                // Si le même EAN est scanné dans les 5 secondes (5000 ms), demander confirmation
-                if (ean === lastScannedEan && timeDifference < 5000) {
-                    // Stocker l'EAN en attente et afficher la modale de confirmation
+
+                if (ean === lastScannedEan && timeDifference < 10000) {
                     pendingEan = ean;
                     duplicateEanElement.textContent = `EAN: ${ean}`;
                     confirmationModal.style.display = 'flex';
                     return;
                 }
 
-                // Si pas de double saisie ou après confirmation, procéder à l'envoi
                 await sendEanToServer(ean);
             }
         });
 
         // Fonction pour envoyer l'EAN au serveur
         async function sendEanToServer(ean) {
-            messageArea.textContent = `Envoi EAN: ${ean}...`;
+            showMessage(`Enregistrement EAN: ${ean}...`, 'info');
             try {
                 const response = await fetch('/add_barcode', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ ean: ean })
                 });
                 const result = await response.json();
                 if (response.ok) {
-                    messageArea.textContent = `Succès: ${result.message}. Présenter les couvertures avec titre et auteur bien visible une par une.`;
-                    // Mettre à jour les variables de suivi après un scan réussi
+                    showMessage(`✅ EAN enregistré : ${ean}. Présentez les couvertures une par une.`, 'success');
                     lastScannedEan = ean;
                     lastScanTimestamp = Date.now();
-                    barcodeInput.value = ''; // Clear input on success
+                    barcodeInput.value = '';
                 } else {
-                    messageArea.textContent = `Erreur: ${result.message || response.statusText}`;
+                    showMessage(`❌ Erreur : ${result.message || response.statusText}`, 'error');
                 }
             } catch (error) {
-                messageArea.textContent = `Erreur réseau: ${error.message}`;
+                showMessage(`❌ Erreur réseau : ${error.message}`, 'error');
             }
         }
 
@@ -245,22 +271,22 @@
             confirmationModal.style.display = 'none';
             if (pendingEan) {
                 await sendEanToServer(pendingEan);
-                pendingEan = ''; // Réinitialiser l'EAN en attente
+                pendingEan = '';
             }
         });
 
         cancelScanButton.addEventListener('click', () => {
             confirmationModal.style.display = 'none';
-            pendingEan = ''; // Réinitialiser l'EAN en attente
-            barcodeInput.value = ''; // Vider le champ de saisie
-            messageArea.textContent = 'Scan annulé.';
+            pendingEan = '';
+            barcodeInput.value = '';
+            showMessage('Scan annulé.', '');
         });
 
         // --- Gestion Webcam ---
         startWebcamButton.addEventListener('click', async () => {
-            if (stream) { // Si la webcam est déjà active, on l'arrête
+            if (stream) {
                 stopWebcam();
-            } else { // Sinon, on la démarre
+            } else {
                 startWebcam();
             }
         });
@@ -268,26 +294,42 @@
         async function startWebcam() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
-                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); // Préfère la caméra arrière
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment' }
+                    });
                     webcamFeed.srcObject = stream;
                     webcamContainer.classList.remove('hidden');
-                    captureButton.style.display = 'block';
+
+                    // CORRECTION PHOTO NOIRE :
+                    // Attendre que la vidéo soit vraiment prête avant d'autoriser la capture
+                    captureButton.style.display = 'none';
+                    captureButton.disabled = true;
+                    showMessage('Webcam en cours d\'initialisation...', 'info');
+
+                    webcamFeed.addEventListener('canplay', function onCanPlay() {
+                        webcamFeed.removeEventListener('canplay', onCanPlay);
+                        // Délai supplémentaire pour laisser le capteur s'ajuster à la luminosité
+                        setTimeout(() => {
+                            captureButton.style.display = 'block';
+                            captureButton.disabled = false;
+                            showMessage('📷 Webcam prête. Cadrez la couverture et capturez.', 'info');
+                        }, 800); // 800ms pour l'ajustement de l'exposition
+                    });
+
                     startWebcamButton.textContent = 'Arrêter Webcam';
-                    messageArea.textContent = 'Webcam activée. Cadrez la couverture.';
-                    barcodeInput.disabled = true; // Désactiver la saisie EAN pendant la photo
+                    barcodeInput.disabled = true;
                 } catch (error) {
                     console.error('Erreur accès webcam:', error);
-                    messageArea.textContent = `Erreur webcam: ${error.message}. Vérifiez les permissions.`;
                     if (error.name === 'NotAllowedError') {
-                         messageArea.textContent = 'Accès à la webcam refusé. Veuillez autoriser l\`accès dans les paramètres de votre navigateur.';
+                        showMessage('❌ Accès à la webcam refusé. Veuillez autoriser l\'accès dans les paramètres de votre navigateur.', 'error');
                     } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-                         messageArea.textContent = 'Aucune webcam compatible trouvée.';
+                        showMessage('❌ Aucune webcam compatible trouvée.', 'error');
                     } else {
-                         messageArea.textContent = 'Erreur inconnue lors de l\`accès à la webcam.';
+                        showMessage(`❌ Erreur webcam : ${error.message}`, 'error');
                     }
                 }
             } else {
-                messageArea.textContent = 'getUserMedia n\'est pas supporté par ce navigateur.';
+                showMessage('❌ getUserMedia n\'est pas supporté par ce navigateur.', 'error');
             }
         }
 
@@ -298,16 +340,26 @@
                 webcamFeed.srcObject = null;
                 webcamContainer.classList.add('hidden');
                 captureButton.style.display = 'none';
+                captureButton.disabled = true;
                 startWebcamButton.textContent = 'Prendre Photo (Sans EAN)';
-                messageArea.textContent = '';
-                barcodeInput.disabled = false; // Réactiver la saisie EAN
+                barcodeInput.disabled = false;
             }
         }
 
+        // --- Capture et envoi de la photo ---
         captureButton.addEventListener('click', async () => {
             if (!stream) return;
 
-            messageArea.textContent = 'Capture en cours...';
+            // CORRECTION PHOTO NOIRE :
+            // Vérifier que la vidéo a bien des dimensions (évite les captures à 0x0)
+            if (webcamFeed.videoWidth === 0 || webcamFeed.videoHeight === 0) {
+                showMessage('⚠️ La caméra n\'est pas encore prête. Veuillez patienter.', 'error');
+                return;
+            }
+
+            showMessage('Capture en cours...', 'info');
+            captureButton.disabled = true; // Éviter les doubles clics
+
             const canvas = document.createElement('canvas');
             canvas.width = webcamFeed.videoWidth;
             canvas.height = webcamFeed.videoHeight;
@@ -317,30 +369,60 @@
             // Arrêter la webcam après la capture
             stopWebcam();
 
+            // CORRECTION LIGNES BLANCHES :
+            // Vérifier que le canvas n'est pas vide avant d'envoyer
+            // (une image noire pure a tous les pixels à 0)
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            const pixels = imageData.data;
+            let totalBrightness = 0;
+            // Échantillonner 1 pixel sur 100 pour la vérification
+            for (let i = 0; i < pixels.length; i += 400) {
+                totalBrightness += pixels[i] + pixels[i+1] + pixels[i+2];
+            }
+            const avgBrightness = totalBrightness / (pixels.length / 400);
+
+            if (avgBrightness < 5) {
+                // Image quasi-noire : ne pas envoyer, demander de réessayer
+                showMessage('⚠️ La photo est trop sombre ou noire. Veuillez réessayer en cliquant sur "Prendre Photo".', 'error');
+                captureButton.disabled = false;
+                return;
+            }
+
             // Envoyer l'image au backend
             canvas.toBlob(async (blob) => {
+                if (!blob || blob.size < 1000) {
+                    // CORRECTION LIGNES BLANCHES :
+                    // Si le blob est vide ou trop petit, ne pas envoyer
+                    showMessage('⚠️ Image invalide (trop petite). Veuillez réessayer.', 'error');
+                    return;
+                }
+
+                showMessage('Envoi de la photo en cours...', 'info');
                 const formData = new FormData();
-                formData.append('image', blob, 'cover.jpg'); // Nom de fichier simple                messageArea.textContent = 'Envoi de l\'image vers Airtable...';
+                formData.append('image', blob, 'cover.jpg');
+
                 try {
                     const response = await fetch('/add_image', {
                         method: 'POST',
-                        body: formData // Pas besoin de Content-Type, le navigateur le gère pour FormData
+                        body: formData
                     });
                     const result = await response.json();
+
                     if (response.ok) {
-                        messageArea.textContent = `Succès: ${result.message}. Présenter les couvertures avec titre et auteur bien visible une par une.`;
+                        showMessage(`✅ Photo enregistrée avec succès !`, 'success');
                     } else {
-                        messageArea.textContent = `Erreur: ${result.message || response.statusText}`;
+                        showMessage(`❌ Erreur photo : ${result.message || response.statusText}`, 'error');
                     }
                 } catch (error) {
-                    messageArea.textContent = `Erreur réseau: ${error.message}`;
+                    showMessage(`❌ Erreur réseau : ${error.message}`, 'error');
                 }
-            }, 'image/jpeg'); // Spécifier le format
+            }, 'image/jpeg', 0.92); // qualité 92%
         });
 
         // Donner le focus au champ de saisie au chargement de la page
         window.addEventListener('load', () => {
             barcodeInput.focus();
+            showMessage('Prêt. Scannez un EAN ou prenez une photo.', '');
         });
     </script>
 </body>
